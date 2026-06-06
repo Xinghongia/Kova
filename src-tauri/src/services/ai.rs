@@ -516,16 +516,22 @@ impl AiService {
                 // Continue loop
             } else {
                 // No tool calls - save and return
-                let save_content = if thinking_content.is_empty() {
+                // If only thinking content with no main text, use thinking as the response
+                let effective_content = if full_content.is_empty() && !thinking_content.is_empty() {
+                    thinking_content.clone()
+                } else {
                     full_content.clone()
+                };
+                let save_content = if thinking_content.is_empty() || full_content.is_empty() {
+                    effective_content.clone()
                 } else {
                     format!("<!--KOVA_THINKING:{}-->\n{}", thinking_content, full_content)
                 };
-                log::info!("[AI Stream] Saving assistant message to DB. content_len={}, thinking_len={}", full_content.len(), thinking_content.len());
+                log::info!("[AI Stream] Saving assistant message to DB. content_len={}, thinking_len={}", effective_content.len(), thinking_content.len());
                 db.add_message(conversation_id, "assistant", &save_content, None, None)?;
-                on_event("done", &full_content);
+                on_event("done", &effective_content);
                 log::info!("[AI Stream] chat_stream completed successfully");
-                return Ok(full_content);
+                return Ok(effective_content);
             }
         }
 
