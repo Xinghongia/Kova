@@ -68,6 +68,8 @@ pub struct ApiMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,15 +175,29 @@ impl AiService {
             content: Some(prompt),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         });
 
         // Add conversation history
         for m in &history {
+            // Extract thinking content from stored message if present
+            let (content, reasoning) = if let Some(c) = m.content.strip_prefix("<!--KOVA_THINKING:") {
+                if let Some(end) = c.find("-->") {
+                    let thinking = c[..end].trim().to_string();
+                    let main = c[end + 3..].trim().to_string();
+                    (if main.is_empty() { None } else { Some(main) }, Some(thinking))
+                } else {
+                    (Some(m.content.clone()), None)
+                }
+            } else {
+                (Some(m.content.clone()), None)
+            };
             api_messages.push(ApiMessage {
                 role: m.role.clone(),
-                content: Some(m.content.clone()),
+                content,
                 tool_calls: m.tool_calls.as_ref().and_then(|tc| serde_json::from_str(tc).ok()),
                 tool_call_id: m.tool_call_id.clone(),
+                reasoning_content: reasoning,
             });
         }
 
@@ -250,6 +266,7 @@ impl AiService {
                         content: Some(result_content),
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
+                        reasoning_content: None,
                     });
                 }
                 // Continue loop to get AI's response after tool execution
@@ -327,15 +344,28 @@ impl AiService {
             content: Some(prompt),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         });
 
         // Add conversation history (truncated)
         for m in truncated_history {
+            let (content, reasoning) = if let Some(c) = m.content.strip_prefix("<!--KOVA_THINKING:") {
+                if let Some(end) = c.find("-->") {
+                    let thinking = c[..end].trim().to_string();
+                    let main = c[end + 3..].trim().to_string();
+                    (if main.is_empty() { None } else { Some(main) }, Some(thinking))
+                } else {
+                    (Some(m.content.clone()), None)
+                }
+            } else {
+                (Some(m.content.clone()), None)
+            };
             api_messages.push(ApiMessage {
                 role: m.role.clone(),
-                content: Some(m.content.clone()),
+                content,
                 tool_calls: m.tool_calls.as_ref().and_then(|tc| serde_json::from_str(tc).ok()),
                 tool_call_id: m.tool_call_id.clone(),
+                reasoning_content: reasoning,
             });
         }
 
@@ -475,6 +505,7 @@ impl AiService {
                     content: None,
                     tool_calls: Some(tool_calls_vec.clone()),
                     tool_call_id: None,
+                    reasoning_content: if thinking_content.is_empty() { None } else { Some(thinking_content.clone()) },
                 });
 
                 // Execute tool calls
@@ -505,6 +536,7 @@ impl AiService {
                         content: Some(result_content),
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
+                        reasoning_content: None,
                     });
                 }
                 // Check abort after tool execution
