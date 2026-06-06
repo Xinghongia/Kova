@@ -39,3 +39,4 @@ src-tauri/gen/
 *.db-journal
 *.db-wal
 *.db-shm
+docs/bilibili-intro.md
