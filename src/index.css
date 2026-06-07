@@ -239,6 +239,16 @@
   margin-right: 0.4em;
   accent-color: var(--color-accent);
 }
+.markdown-body .math-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+  margin: 0.8em 0;
+}
+.markdown-body .katex-display {
+  margin: 0;
+}
+.markdown-body .katex { font-size: 1.1em; }
 
 /* Hide thinking tags if rendered as HTML */
 thinking { display: none !important; }
