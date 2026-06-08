@@ -9,13 +9,33 @@ use crate::services::models::Note;
 impl Database {
     pub fn import_md_file(&self, path: &str) -> Result<Note, String> {
         let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
-        let (title, body) = if content.starts_with("# ") {
-            let end = content.find('\n').unwrap_or(content.len());
-            (content[2..end].trim().to_string(), content[end..].trim_start().to_string())
-        } else {
-            (String::new(), content)
-        };
+        let (title, body) = Self::parse_md_title_and_body(&content);
         self.create_note(&title, &body, vec![], None)
+    }
+
+    fn parse_md_title_and_body(content: &str) -> (String, String) {
+        // 1. Try YAML front matter: ---\ntitle: ...\n---
+        if content.starts_with("---") {
+            if let Some(end) = content[3..].find("\n---") {
+                let fm_block = &content[3..3 + end];
+                for line in fm_block.lines() {
+                    let trimmed = line.trim();
+                    if let Some(val) = trimmed.strip_prefix("title:") {
+                        let title = val.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+                        let body_start = 3 + end + 4; // skip "\n---"
+                        let body = content[body_start..].trim_start().to_string();
+                        return (title, body);
+                    }
+                }
+            }
+        }
+        // 2. Try heading: # Title
+        if content.starts_with("# ") {
+            let end = content.find('\n').unwrap_or(content.len());
+            return (content[2..end].trim().to_string(), content[end..].trim_start().to_string());
+        }
+        // 3. No title
+        (String::new(), content.to_string())
     }
 
     pub fn import_html_file(&self, path: &str) -> Result<Note, String> {
@@ -59,12 +79,16 @@ impl Database {
 
     pub fn export_note_as_md(&self, id: &str, dest_dir: &str) -> Result<String, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let (title, content): (String, String) = conn.query_row(
-            "SELECT title, content FROM notes WHERE id = ?1", params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+        let (title, content, updated_at): (String, String, String) = conn.query_row(
+            "SELECT title, content, updated_at FROM notes WHERE id = ?1", params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(|e| format!("Note not found: {}", e))?;
 
-        let full_content = if title.is_empty() { content } else { format!("# {}\n\n{}", title, content) };
+        let full_content = if title.is_empty() {
+            content
+        } else {
+            format!("---\ntitle: {}\ndate: {}\n---\n\n{}", title, Self::format_beijing_time(&updated_at), content)
+        };
         let safe_name = Self::safe_filename(&title);
 
         let dest = PathBuf::from(dest_dir);
@@ -91,6 +115,8 @@ impl Database {
         html::push_html(&mut html_content, parser);
 
         let display_title = if title.is_empty() { "无标题笔记" } else { &title };
+        let created_beijing = Self::format_beijing_time(&created_at);
+        let updated_beijing = Self::format_beijing_time(&updated_at);
         let html_doc = format!(
             r#"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -121,8 +147,8 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
 </body>
 </html>"#,
             title = display_title,
-            created_at = created_at,
-            updated_at = updated_at,
+            created_at = created_beijing,
+            updated_at = updated_beijing,
             content = html_content,
         );
 
@@ -156,5 +182,16 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
         let safe: String = name.chars().take(40).filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_').collect();
         let safe = safe.trim().to_string();
         if safe.is_empty() { "note".to_string() } else { safe }
+    }
+
+    fn format_beijing_time(utc_str: &str) -> String {
+        use chrono::{DateTime, FixedOffset};
+        if let Ok(dt) = utc_str.parse::<DateTime<FixedOffset>>() {
+            let beijing = FixedOffset::east_opt(8 * 3600).unwrap();
+            let local = dt.with_timezone(&beijing);
+            local.format("%Y-%m-%d %H:%M:%S").to_string()
+        } else {
+            utc_str.to_string()
+        }
     }
 }
